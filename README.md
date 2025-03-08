@@ -135,7 +135,7 @@ ResumeRanker/
 ```python
 import requests
 
-url = "http://localhost:8000/extract-criteria-from-file"
+url = "http://localhost:8000/extract-criteria"
 files = {"job_description_file": open("job_description.pdf", "rb")}
 
 response = requests.post(url, files=files)
@@ -166,7 +166,7 @@ with open("resume_scores.csv", "wb") as f:
 ```python
 import requests
 
-url = "http://localhost:8000/rank-resumes-from-job"
+url = "http://localhost:8000/all"
 files = [
     ("job_description_file", open("job_description.pdf", "rb")),
     ("resumes", open("resume1.pdf", "rb")),
@@ -178,36 +178,6 @@ response = requests.post(url, files=files)
 with open("rankings.csv", "wb") as f:
     f.write(response.content)
 ```
-
-## Testing
-
-Run the test suite using pytest:
-
-```bash
-pytest
-```
-
-For coverage report:
-
-```bash
-pytest --cov=app
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **File Format Errors**
-   - Ensure job descriptions and resumes are in PDF or DOCX format
-   - Check for corrupted files
-
-2. **API Key Issues**
-   - Verify your Groq API key is correctly set in the `.env` file
-   - Check for API rate limiting or quota issues
-
-3. **Installation Problems**
-   - Make sure you're using Python 3.11.8
-   - Try reinstalling dependencies with `pip install -r requirements.txt --force-reinstall`
 
 ## Contributing
 
@@ -238,11 +208,24 @@ flake8
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+Copyright 2025 Mindk-scrap
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ## Acknowledgments
 
 - [CrewAI](https://github.com/joaomdmoura/crewAI) for the agent framework
 - [Groq](https://groq.com/) for their efficient LLM inference API
 - [FastAPI](https://fastapi.tiangolo.com/) for the API framework
-- All contributors who have helped improve this project
