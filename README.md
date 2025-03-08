@@ -4,7 +4,7 @@ A production-grade FastAPI application that automates resume ranking based on jo
 
 ## Explaination
 
-<div style="position: relative; padding-bottom: 56.25%; height: 0;"><iframe src="https://www.loom.com/embed/c69fe3c7b7bc44e296243e6d0657ab60?sid=b2e66908-ccf9-43aa-895d-4eae1a776126" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe></div>
+<div style="position: relative; padding-bottom: 56.25%; height: 0;"><iframe src="https://www.loom.com/embed/c69fe3c7b7bc44e296243e6d0657ab60?sid=48794777-caaa-41be-a152-49346d6d9bef" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe></div>
 
 ## Features
 
