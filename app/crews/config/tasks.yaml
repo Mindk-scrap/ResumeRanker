@@ -1,0 +1,155 @@
+extract_criteria:
+  description: >
+    Analyze the job description and extract key ranking criteria.
+    
+    Job Description:
+    {job_description}
+    
+    Guidelines:
+    1. Focus on required skills, experience, qualifications, and certifications
+    2. Distinguish between mandatory and preferred requirements
+    3. Format each criterion as a clear, concise statement
+    4. Ensure criteria are measurable and objective
+    5. Exclude subjective or vague requirements
+    6. Return each criterion as a complete statement
+    
+    Expected Output Format:
+    Return a JSON array of strings, where each string is a complete criterion statement.
+    Each criterion should start with either "[Required]" or "[Preferred]" followed by the requirement.
+    
+    Example:
+    [
+      "[Required] 3+ years of experience in Python development",
+      "[Required] Bachelor's degree in Computer Science",
+      "[Preferred] Experience with cloud platforms",
+      "[Preferred] Knowledge of machine learning"
+    ]
+    
+    Note: Do not use bullet points or separate sections. Each criterion should be a complete string.
+  expected_output: "A JSON array of strings, each string being a complete criterion prefixed with either '[Required]' or '[Preferred]'"
+
+extract_name:
+  description: >
+    Extract the candidate's full name from their resume content.
+    
+    Resume Content:
+    {resume_content}
+    
+    Guidelines:
+    1. Look for common resume header patterns:
+       - Name at the top of the document
+       - Name in larger or bold font
+       - Name followed by contact information
+       - Name in header/footer sections
+    2. Check for contact information sections:
+       - Email addresses (e.g., john.smith@email.com)
+       - Phone numbers with associated names
+       - LinkedIn profiles with names
+       - Physical addresses with names
+    3. Look for specific name indicators:
+       - "Resume of [Name]"
+       - "Curriculum Vitae - [Name]"
+       - "Name: [Name]"
+       - "[Name]'s Resume"
+    4. Analyze document metadata:
+       - Author information
+       - Title or subject fields
+       - File properties
+    5. Validate extracted names:
+       - Must contain first and last name
+       - Should not be company names or job titles
+       - Should not be common example names (John Doe, etc.)
+       - Should match cultural naming patterns
+       - Should be consistent if found in multiple places
+    
+    Expected Output Format:
+    {
+      "name": "Full Name",
+      "confidence": 0-100,
+      "source": "Brief explanation of where and how the name was found"
+    }
+    
+    ***************************************************************
+    * CRITICAL INSTRUCTION - READ CAREFULLY:                      *
+    * YOU MUST ONLY EXTRACT THE ACTUAL NAME FROM THE RESUME.      *
+    * NEVER RETURN "EMILY CHEN" OR "JOHN SMITH" OR ANY OTHER      *
+    * EXAMPLE NAME. THESE ARE FORBIDDEN EXAMPLES.                 *
+    * EXACT MATCHES OF "EMILY CHEN" WILL BE CONSIDERED FAILURES.  *
+    * ONLY RETURN THE ACTUAL UNIQUE NAME FROM THE RESUME TEXT.    *
+    * IF NO VALID NAME IS FOUND, RETURN EMPTY STRING WITH 0       *
+    * CONFIDENCE.                                                 *
+    ***************************************************************
+    
+    Format (REPLACE WITH ACTUAL NAME FROM RESUME):
+    {
+      "name": "ACTUAL_NAME_FROM_RESUME",
+      "confidence": 95,
+      "source": "Found in document header with contact information"
+    }
+    
+    Confidence Score Guidelines:
+    90-100: Name found in multiple places with consistent format and strong indicators
+    80-89: Name found in header/contact section with clear formatting
+    70-79: Name found but with some uncertainty
+    50-69: Name inferred from indirect sources (email, etc.)
+    <50: Low confidence, possibly incorrect
+    
+    Requirements:
+    1. Only return names with confidence >= 70
+    2. If no confident name found, return empty name with 0 confidence
+    3. NEVER return "Emily Chen" or any other example names
+    4. Always include source information explaining where the name was found
+    5. Confidence must reflect the reliability of the extraction method
+  expected_output: "A JSON object with name (string), confidence (integer 0-100), and source (string) explaining where the name was found"
+
+score_resume:
+  description: >
+    Evaluate the resume against each criterion using the following scoring system.
+    
+    Resume Content:
+    {resume_content}
+    
+    Criteria to evaluate against:
+    {criteria}
+    
+    Scoring Guidelines:
+    0 = No evidence of criterion in resume
+    1 = Minimal match, barely mentioned
+    2 = Partial match, some relevant experience
+    3 = Good match, meets basic requirements
+    4 = Strong match, exceeds requirements
+    5 = Perfect match, exceptional qualifications
+    
+    Additional Instructions:
+    1. Consider both direct and transferable skills
+    2. Look for evidence of practical application
+    3. Account for recency and relevance of experience
+    4. Weight [Required] criteria more heavily
+    5. Provide brief justification for each score
+    
+    JSON Output Requirements (MUST FOLLOW EXACTLY):
+    1. Generate VALID, COMPLETE, and WELL-FORMED JSON
+    2. ENSURE all strings are properly terminated with double quotes
+    3. Do NOT include duplicate criteria entries
+    4. Do NOT include any trailing commas
+    5. ONLY include criterion, score, and justification fields
+    6. ALL scores must be integers between 0-5
+    7. Keep justifications under 100 characters
+    8. ALWAYS verify the JSON is complete before returning
+    
+    Expected Output Format:
+    {
+      "scores": [
+        {
+          "criterion": "Full criterion text exactly as provided",
+          "score": <integer between 0-5>,
+          "justification": "Brief explanation of the score"
+        }
+      ]
+    }
+    
+    Note: 
+    1. Each score must be a whole number between 0 and 5
+    2. Use the exact criterion text as provided in the input
+    3. Keep justifications concise but informative
+  expected_output: "A JSON object containing an array of score objects, each with criterion (string), score (integer 0-5), and justification (string)"

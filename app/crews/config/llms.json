@@ -1,0 +1,23 @@
+{
+  "job_requirements_analyst": {
+    "llm": {
+      "model": "groq/llama-3.1-8b-instant",
+      "temperature": 0.1,
+      "max_completion_tokens": 512
+    }
+  },
+  "resume_evaluation_specialist": {
+    "llm": {
+      "model": "groq/llama-3.1-8b-instant",
+      "temperature": 0.1,
+      "max_completion_tokens": 512
+    }
+  },
+  "name_extraction_specialist": {
+    "llm": {
+      "model": "groq/llama-3.1-8b-instant",
+      "temperature": 0.1,
+      "max_completion_tokens": 256
+    }
+  }
+}

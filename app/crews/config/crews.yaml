@@ -1,0 +1,19 @@
+resume_ranking_crew:
+  name: "Resume Ranking Crew"
+  description: "A specialized crew for analyzing job descriptions and ranking resumes"
+  agents:
+    - job_requirements_analyst
+    - resume_evaluation_specialist
+    - name_extraction_specialist
+  tasks:
+    extract_name:
+      task: extract_name
+      depends_on: []
+    extract_criteria:
+      task: extract_criteria
+      depends_on: []
+    score_resume:
+      task: score_resume
+      depends_on: [extract_criteria]
+  process: sequential
+  verbose: true
