@@ -2,15 +2,19 @@
 
 A production-grade FastAPI application that automates resume ranking based on job descriptions using CrewAI and Groq LLM.
 
-## Explaination
+## Explaination Video
 
-<div style="position: relative; padding-bottom: 56.25%; height: 0;"><iframe src="https://www.loom.com/embed/c69fe3c7b7bc44e296243e6d0657ab60?sid=48794777-caaa-41be-a152-49346d6d9bef" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe></div>
+[https://www.loom.com/share/c69fe3c7b7bc44e296243e6d0657ab60?sid=b6458446-2fd0-452f-b8dc-8b727b18b3de](https://www.loom.com/share/c69fe3c7b7bc44e296243e6d0657ab60?sid=b6458446-2fd0-452f-b8dc-8b727b18b3de)
+
+## Demo Video
+
+[https://www.loom.com/share/6284aa46e16643a1b2141edfd59128c5?sid=f3b7b3a8-c7c8-485c-b9f0-b63c6cd8c97a](https://www.loom.com/share/6284aa46e16643a1b2141edfd59128c5?sid=f3b7b3a8-c7c8-485c-b9f0-b63c6cd8c97a)
 
 ## Features
 
 - Extract ranking criteria from job descriptions (PDF/DOCX)
 - Score multiple resumes against extracted criteria
-- Automated scoring using CrewAI and Groq Provider
+- Automated scoring using CrewAI and Groq Provider 
 - Intelligent candidate name extraction from resumes
 - Export results in CSV format
 - Swagger UI documentation
