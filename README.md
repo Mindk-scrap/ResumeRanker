@@ -127,3 +127,122 @@ ResumeRanker/
 ├── .env.example
 └── README.md
 ```
+
+## Example API Usage
+
+### Extracting Criteria from Job Description
+
+```python
+import requests
+
+url = "http://localhost:8000/extract-criteria-from-file"
+files = {"job_description_file": open("job_description.pdf", "rb")}
+
+response = requests.post(url, files=files)
+criteria = response.json()["criteria"]
+print(criteria)
+```
+
+### Scoring Resumes Against Criteria
+
+```python
+import requests
+
+url = "http://localhost:8000/score-resumes"
+files = [
+    ("criteria_file", open("criteria.json", "rb")),
+    ("resumes", open("resume1.pdf", "rb")),
+    ("resumes", open("resume2.pdf", "rb")),
+    ("resumes", open("resume3.pdf", "rb")),
+]
+
+response = requests.post(url, files=files)
+with open("resume_scores.csv", "wb") as f:
+    f.write(response.content)
+```
+
+### Complete Resume Ranking Pipeline
+
+```python
+import requests
+
+url = "http://localhost:8000/rank-resumes-from-job"
+files = [
+    ("job_description_file", open("job_description.pdf", "rb")),
+    ("resumes", open("resume1.pdf", "rb")),
+    ("resumes", open("resume2.pdf", "rb")),
+    ("resumes", open("resume3.pdf", "rb")),
+]
+
+response = requests.post(url, files=files)
+with open("rankings.csv", "wb") as f:
+    f.write(response.content)
+```
+
+## Testing
+
+Run the test suite using pytest:
+
+```bash
+pytest
+```
+
+For coverage report:
+
+```bash
+pytest --cov=app
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **File Format Errors**
+   - Ensure job descriptions and resumes are in PDF or DOCX format
+   - Check for corrupted files
+
+2. **API Key Issues**
+   - Verify your Groq API key is correctly set in the `.env` file
+   - Check for API rate limiting or quota issues
+
+3. **Installation Problems**
+   - Make sure you're using Python 3.11.8
+   - Try reinstalling dependencies with `pip install -r requirements.txt --force-reinstall`
+
+## Contributing
+
+We welcome contributions to ResumeRanker! Please follow these steps:
+
+1. Fork the repository
+2. Create a new branch: `git checkout -b feature-name`
+3. Make your changes
+4. Run tests to ensure they pass: `pytest`
+5. Commit your changes: `git commit -m 'Add some feature'`
+6. Push to the branch: `git push origin feature-name`
+7. Submit a pull request
+
+### Code Style
+
+We follow PEP 8 coding standards. Please ensure your code adheres to these standards by running:
+
+```bash
+black .
+flake8
+```
+
+### Pull Request Process
+
+1. Update the README.md with details of changes if applicable
+2. Update the requirements.txt if you've added new dependencies
+3. The PR will be merged once it has been reviewed and approved
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [CrewAI](https://github.com/joaomdmoura/crewAI) for the agent framework
+- [Groq](https://groq.com/) for their efficient LLM inference API
+- [FastAPI](https://fastapi.tiangolo.com/) for the API framework
+- All contributors who have helped improve this project
