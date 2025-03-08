@@ -1,0 +1,746 @@
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
+from typing import Dict, List, Any
+import json
+import pandas as pd
+from io import BytesIO
+import time
+from dotenv import load_dotenv
+import os
+import uvicorn
+import csv
+
+from .services.document_processor import DocumentProcessor
+from .crews.resume_ranker_crew import ResumeRankerCrew
+from .logger import get_logger
+from .models.schemas import ErrorResponse
+
+logger = get_logger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+class CriteriaRequest(BaseModel):
+    """Request model for extracting criteria from job description"""
+    job_description: str
+
+# Get configured logger
+logger = get_logger(__name__)
+
+def validate_environment() -> None:
+    """Validate required environment variables"""
+    required_vars = ["GROQ_API_KEY"]
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+        
+    logger.info("Environment validation successful")
+
+app = FastAPI(
+    title="Resume Ranker API",
+    description="API endpoints for ranking resumes based on job descriptions using CrewAI and Groq",
+    version="1.0.0"
+)
+
+@app.get("/", 
+         tags=["Root"],
+         summary="Root endpoint")
+async def root():
+    """
+    Root endpoint that provides basic information about the API.
+    
+    Returns:
+    - JSON object with welcome message and available endpoints
+    """
+    logger.info("Root endpoint called")
+    return {
+        "message": "Welcome to Resume Ranker API",
+        "description": "API for ranking resumes based on job descriptions using CrewAI and Groq",
+        "endpoints": {
+            "/extract-criteria": "Extract ranking criteria from job description",
+            "/score-resumes": "Score resumes against provided criteria",
+            "/extract-name": "Extract candidate name from resume",
+            "/all": "Extract criteria from job description and rank resumes in one step"
+        },
+        "version": "1.0.0"
+    }
+
+async def extract_criteria_from_text(job_description: str) -> List[str]:
+    """Extract ranking criteria from job description text using CrewAI"""
+    if not job_description or job_description.strip() == "":
+        logger.error("Empty job description provided")
+        raise ValueError("Job description cannot be empty")
+        
+    logger.info(f"Extracting criteria from job description ({len(job_description)} chars)")
+    start_time = time.time()
+    
+    try:
+        # Initialize the resume ranker crew
+        resume_ranker_crew = ResumeRankerCrew()
+        
+        # Run the crew with extract_criteria task
+        result = resume_ranker_crew.kickoff({
+            "job_description": job_description
+        })
+        
+        # Parse the result into a list of criteria
+        try:
+            # Convert CrewOutput to string and parse JSON
+            criteria_list = json.loads(str(result))
+            criteria = []
+            
+            if not isinstance(criteria_list, list):
+                logger.error(f"Invalid criteria format: {criteria_list}")
+                raise ValueError("Invalid criteria format: expected a list")
+                
+            for criterion in criteria_list:
+                if not isinstance(criterion, str):
+                    logger.warning(f"Invalid criterion type: {type(criterion)}")
+                    continue
+                    
+                criterion = criterion.strip()
+                if criterion:  # Accept any non-empty string criterion
+                    criteria.append(criterion)
+                    
+            if not criteria:
+                logger.warning("No valid criteria extracted")
+                raise ValueError("No valid criteria could be extracted")
+                
+            logger.info(f"Successfully extracted {len(criteria)} criteria in {time.time() - start_time:.2f} seconds")
+            return criteria
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse criteria as JSON: {str(e)}")
+            raise ValueError("Invalid criteria format")
+            
+    except Exception as e:
+        logger.error(f"Error extracting criteria: {str(e)}")
+        raise ValueError(f"Failed to extract criteria: {str(e)}")
+
+@app.post("/extract-criteria",
+          tags=["Criteria Extraction"],
+          summary="Extract ranking criteria from job description file",
+          response_model=Dict[str, List[str]],
+          responses={
+              400: {"model": ErrorResponse, "description": "Bad Request"},
+              500: {"model": ErrorResponse, "description": "Internal Server Error"}
+          })
+async def extract_criteria_endpoint(
+    file: UploadFile = File(..., description="Job description file (PDF or DOCX)")
+) -> Dict[str, List[str]]:
+    """
+    Extract ranking criteria from an uploaded job description file.
+    
+    Args:
+        file (UploadFile): Job description file in PDF or DOCX format
+        
+    Returns:
+        Dict[str, List[str]]: Dictionary containing list of extracted criteria
+        
+    Example Output:
+        {
+          "criteria": [
+            "Must have certification XYZ",
+            "5+ years of experience in Python development",
+            "Strong background in Machine Learning"
+          ]
+        }
+        
+    Raises:
+        HTTPException: If file processing fails or invalid format
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+        
+    # Validate file extension
+    allowed_extensions = {".pdf", ".docx"}
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid file format. Allowed formats: {', '.join(allowed_extensions)}"
+        )
+    
+    try:
+        # Process document to extract text
+        doc_processor = DocumentProcessor()
+        job_description = await doc_processor.extract_text_from_upload(file)
+        
+        if not job_description:
+            raise HTTPException(status_code=400, detail="Could not extract text from file")
+            
+        # Extract criteria from text
+        criteria = await extract_criteria_from_text(job_description)
+        return {"criteria": criteria}
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error processing job description file: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to process job description file")
+
+async def score_resume_against_criteria(resume_content: str, criteria: List[str]) -> Dict[str, Any]:
+    """
+    Score a resume against provided criteria using CrewAI
+    
+    Args:
+        resume_content (str): Text content of resume
+        criteria (List[str]): List of criteria to score against
+        
+    Returns:
+        Dict[str, int]: Dictionary mapping criteria to scores (0-5)
+    """
+    if not resume_content or resume_content.strip() == "":
+        logger.error("Empty resume content provided")
+        raise ValueError("Resume content cannot be empty")
+        
+    if not criteria or not isinstance(criteria, list) or len(criteria) == 0:
+        logger.error("No criteria provided for scoring")
+        raise ValueError("At least one criterion must be provided")
+        
+    logger.info(f"Scoring resume ({len(resume_content)} chars) against {len(criteria)} criteria")
+    start_time = time.time()
+    
+    try:
+        # Initialize the resume ranker crew
+        resume_ranker_crew = ResumeRankerCrew()
+        
+        # Run the crew with score_resume task
+        result = resume_ranker_crew.kickoff({
+            "resume_content": resume_content,
+            "criteria": criteria
+        })
+        
+        # Parse the result into a dictionary
+        # Expected format: JSON object with scores array containing criterion, score, and justification
+        try:
+            # Convert CrewOutput to string for parsing
+            result_str = str(result)
+            
+            # Log the first part of the result for debugging
+            if len(result_str) > 500:
+                logger.debug(f"Result preview (first 500 chars): {result_str[:500]}...")
+            else:
+                logger.debug(f"Result: {result_str}")
+                
+            # Try to parse JSON
+            try:
+                result_dict = json.loads(result_str)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Initial JSON parse error: {str(e)}")
+                
+                # Advanced recovery for malformed JSON responses
+                logger.info("Attempting to recover partial JSON response")
+                
+                # Try to extract all valid score objects even if overall JSON is invalid
+                import re
+                
+                # More robust pattern to find complete score objects
+                score_pattern = re.compile(r'\{\s*"criterion":\s*"([^"]*)"\s*,\s*"score":\s*(\d+)\s*,\s*"justification":\s*"([^"]*?)"\s*\}')
+                matches = score_pattern.findall(result_str)
+                
+                if matches:
+                    # Reconstruct scores from regex matches - more resilient to malformed JSON
+                    scores_objects = []
+                    unique_criteria = set()  # To track and prevent duplicate criteria
+                    
+                    for criterion, score, justification in matches:
+                        # Skip duplicate criteria entries
+                        if criterion in unique_criteria:
+                            logger.warning(f"Skipping duplicate criterion: {criterion}")
+                            continue
+                            
+                        unique_criteria.add(criterion)
+                        
+                        # Create a clean score object
+                        clean_object = {
+                            "criterion": criterion,
+                            "score": int(score),
+                            "justification": justification
+                        }
+                        scores_objects.append(clean_object)
+                    
+                    logger.info(f"Reconstructed JSON with {len(scores_objects)} complete score objects")
+                    result_dict = {"scores": scores_objects}
+                else:
+                    # If regex approach fails, try a more aggressive approach for partial data
+                    try:
+                        # Find all criteria mentioned - even if incomplete
+                        criteria_pattern = re.compile(r'"criterion":\s*"([^"]*)"')
+                        criteria_matches = criteria_pattern.findall(result_str)
+                        
+                        # Find all scores mentioned
+                        score_pattern = re.compile(r'"score":\s*(\d+)')
+                        score_matches = score_pattern.findall(result_str)
+                        
+                        # If we have matching counts, we can pair them
+                        if len(criteria_matches) == len(score_matches) and len(criteria_matches) > 0:
+                            scores_objects = []
+                            for i, (criterion, score) in enumerate(zip(criteria_matches, score_matches)):
+                                scores_objects.append({
+                                    "criterion": criterion,
+                                    "score": int(score),
+                                    "justification": f"Recovered from partial response (item {i+1})"
+                                })
+                            result_dict = {"scores": scores_objects}
+                            logger.info(f"Recovered {len(scores_objects)} criteria-score pairs using pattern matching")
+                        else:
+                            logger.error("Could not recover score objects: mismatched criteria and scores")
+                            raise ValueError("Invalid scoring response format - mismatched recovery")
+                    except Exception as recovery_err:
+                        logger.error(f"Failed all recovery attempts: {str(recovery_err)}")
+                        raise ValueError("Invalid scoring response format - recovery failed")
+            
+            scores = {}
+            
+            if not isinstance(result_dict, dict) or 'scores' not in result_dict:
+                logger.error("Invalid response format: missing 'scores' array")
+                raise ValueError("Invalid scoring response format")
+                
+            for score_obj in result_dict['scores']:
+                if not all(k in score_obj for k in ('criterion', 'score')):
+                    logger.warning(f"Invalid score object format: {score_obj}")
+                    continue
+                    
+                criterion = score_obj['criterion']
+                score = score_obj['score']
+                
+                if not isinstance(score, (int, float)) or score < 0 or score > 5:
+                    logger.warning(f"Invalid score value for {criterion}: {score}")
+                    score = 0
+                    
+                scores[criterion] = int(score)  # Convert to int to ensure consistent type
+                
+            # Ensure all criteria have scores
+            for criterion in criteria:
+                if criterion not in scores:
+                    logger.warning(f"No score for criterion: {criterion}")
+                    scores[criterion] = 0
+                    
+            logger.info(f"Successfully scored resume in {time.time() - start_time:.2f} seconds")
+            return scores
+            
+        except Exception as e:
+            logger.error(f"Failed to process scoring response: {str(e)}")
+            
+            # Assign default scores if parsing fails
+            logger.warning("Using default scores (0) for all criteria due to parsing error")
+            return {criterion: 0 for criterion in criteria}
+            
+    except Exception as e:
+        logger.error(f"Error scoring resume: {str(e)}")
+        raise ValueError(f"Failed to score resume: {str(e)}")
+
+@app.post("/score-resumes",
+          responses={
+              200: {
+                  "description": "Successfully scored resumes",
+                  "content": {
+                      "text/csv": {
+                          "schema": {
+                              "type": "string",
+                              "format": "binary",
+                              "description": "CSV file containing candidate scores"
+                          }
+                      }
+                  }
+              },
+              400: {"model": ErrorResponse, "description": "Bad request - Invalid input"},
+              422: {"model": ErrorResponse, "description": "Validation error"},
+              500: {"model": ErrorResponse, "description": "Internal server error"}
+          },
+          tags=["Resume Scoring"],
+          summary="Score multiple resumes against provided criteria")
+async def score_resumes(
+    criteria: str = Form(..., description="JSON array of ranking criteria strings or comma-separated list of criteria"),
+    resumes: List[UploadFile] = File(..., description="Resume files (PDF or DOCX)")
+) -> StreamingResponse:
+    """
+    Score multiple resumes against provided ranking criteria.
+    
+    The endpoint processes multiple resume files and scores them against the provided criteria
+    using an intelligent scoring system powered by CrewAI.
+    
+    Args:
+        criteria (str): Can be one of:
+                        - JSON array of criteria strings: ["criterion1", "criterion2"]
+                        - JSON object with a "criteria" key: {"criteria": ["criterion1", "criterion2"]}
+                        - Comma-separated list of criteria: "criterion1,criterion2"
+        resumes (List[UploadFile]): List of resume files in PDF or DOCX format
+        
+    Returns:
+        StreamingResponse: CSV file containing:
+            - Candidate names (extracted or from filename)
+            - Individual scores for each criterion (0-5 scale)
+            - Total score
+            - Any processing errors
+            
+    Example criteria:
+        [
+            "Must have certification XYZ",
+            "5+ years of experience in Python development",
+            "Strong background in Machine Learning"
+        ]
+        
+    Note:
+        - Scores are on a 0-5 scale where:
+            0 = Not mentioned/No match
+            1 = Poor match
+            2 = Fair match
+            3 = Good match
+            4 = Very good match
+            5 = Excellent match
+        - The output CSV file is sorted by total score in descending order
+    """
+    try:
+        # First try to parse as JSON
+        try:
+            parsed_json = json.loads(criteria)
+            
+            # Check if the input is already an array of strings
+            if isinstance(parsed_json, list) and all(isinstance(c, str) for c in parsed_json):
+                criteria_list = parsed_json
+            # Check if the input is an object with a 'criteria' key (from extract-criteria endpoint)
+            elif isinstance(parsed_json, dict) and 'criteria' in parsed_json and isinstance(parsed_json['criteria'], list):
+                criteria_list = parsed_json['criteria']
+            else:
+                raise ValueError("When providing JSON, criteria must be a list of strings or an object with a 'criteria' key containing a list of strings")
+                
+            if not all(isinstance(c, str) for c in criteria_list):
+                raise ValueError("Criteria must be a list of strings")
+                
+        except json.JSONDecodeError:
+            # If not valid JSON, try parsing as comma-separated string
+            logger.info("Criteria is not valid JSON, attempting to parse as comma-separated string")
+            criteria_list = [c.strip() for c in criteria.split(",") if c.strip()]
+            
+            # Validate the list is not empty
+            if not criteria_list:
+                raise ValueError("No valid criteria found in the input string")
+            
+        logger.info(f"Score resumes endpoint called with {len(resumes)} files and {len(criteria_list)} criteria")
+        
+        # Validate input
+        if not criteria_list:
+            logger.warning("No criteria provided")
+            raise HTTPException(status_code=400, detail="No criteria provided")
+        
+        if not resumes:
+            logger.warning("No resume files provided")
+            raise HTTPException(status_code=400, detail="No resume files provided")
+        
+        # Check file extensions and size limits
+        for file in resumes:
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="Invalid file: missing filename")
+                
+            file_extension = os.path.splitext(file.filename)[1].lower()
+            if file_extension not in ['.pdf', '.docx']:
+                logger.warning(f"Unsupported file format for {file.filename}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file format for {file.filename}. Only PDF and DOCX files are supported."
+                )
+        
+        doc_processor = DocumentProcessor()
+        
+        # Process each resume
+        results = []
+        for file in resumes:
+            try:
+                logger.info(f"Processing resume: {file.filename}")
+                content = await doc_processor.extract_text_from_upload(file)
+                
+                if not content:
+                    raise ValueError("No text content could be extracted from file")
+                
+                # Extract candidate name using intelligent name extraction
+                name_result = await extract_candidate_name(content, file.filename)
+                candidate_name = name_result.get('name') if name_result and name_result.get('confidence', 0) >= 70 else None
+                
+                # Fallback to filename if name extraction fails
+                if not candidate_name:
+                    candidate_name = os.path.splitext(file.filename)[0].replace('_', ' ').title()
+                    logger.warning(f"Using filename as candidate name for {file.filename}")
+                
+                # Score resume against criteria
+                scores = await score_resume_against_criteria(content, criteria_list)
+                
+                # Create result dictionary with proper column names
+                result = {'Candidate Name': candidate_name}
+                for criterion, score in scores.items():
+                    # Ensure score is within 0-5 range
+                    score = max(0, min(5, score))
+                    # Use criterion as column name, cleaned up
+                    column_name = criterion.replace('[Required] ', '').replace('[Preferred] ', '')
+                    result[column_name] = score
+                
+                results.append(result)
+                logger.info(f"Successfully scored resume: {file.filename}")
+            except Exception as e:
+                # Continue with other resumes even if one fails
+                logger.error(f"Error processing resume {file.filename}: {str(e)}")
+                results.append({
+                    'Candidate Name': os.path.splitext(file.filename)[0].replace('_', ' ').title(),
+                    'Error': str(e),
+                })
+        
+        if not results:
+            logger.error("Failed to process any resumes")
+            raise HTTPException(status_code=500, detail="Failed to process any resumes")
+        
+        # Create DataFrame and CSV file
+        df = pd.DataFrame(results)
+        
+        # Check if we have an 'Error' column, indicating all processing failed
+        if 'Error' in df.columns and len(df.columns) == 2:  # Only Candidate Name and Error
+            logger.error("Failed to process all resumes")
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to process all resumes. Check file formats and try again."
+            )
+        
+        # Set Candidate Name as first column but not as index
+        columns = ['Candidate Name'] + [col for col in df.columns if col != 'Candidate Name' and col != 'Error']
+        if 'Error' in df.columns:
+            columns.append('Error')
+        df = df[columns]
+        
+        # Calculate total score (excluding Error column if present)
+        score_columns = [col for col in df.columns if col not in ['Candidate Name', 'Error']]
+        df['Total Score'] = df[score_columns].sum(axis=1)
+        
+        # Sort by total score descending
+        df = df.sort_values('Total Score', ascending=False)
+        
+        # Create CSV file in memory
+        output = BytesIO()
+        df.to_csv(output, index=False)
+        
+        output.seek(0)
+        
+        logger.info(f"Successfully generated resume scores CSV file for {len(resumes)} candidates")
+        return StreamingResponse(
+            output,
+            media_type="text/csv",
+            headers={
+                'Content-Disposition': 'attachment; filename=resume_scores.csv'
+            }
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in score_resumes: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+async def extract_candidate_name(content: str, file_name: str = None) -> Dict[str, Any]:
+    """
+    Extract candidate name from resume content using CrewAI's name extraction specialist.
+    
+    Args:
+        content (str): Text content of resume
+        file_name (str, optional): Original filename, used as fallback if extraction fails
+        
+    Returns:
+        Dict[str, Any]: Dictionary containing:
+            - name (str): Extracted candidate name or empty string if not found
+            - confidence (int): Confidence score (0-100)
+            - source (str): Where the name was found
+            
+    Raises:
+        ValueError: If extraction fails or returns invalid data
+    """
+    if not content or content.strip() == "":
+        logger.error("Empty content provided for name extraction")
+        return {"name": "", "confidence": 0, "source": "empty_content"}
+        
+    logger.info(f"Extracting name from content ({len(content)} chars)")
+    start_time = time.time()
+    
+    try:
+        # Initialize the resume ranker crew
+        resume_ranker_crew = ResumeRankerCrew()
+        
+        # Run the crew with extract_name task
+        result = resume_ranker_crew.kickoff({
+            "resume_content": content,
+            "extract_name_only": True,
+            "filename": file_name  # Pass filename to crew for context
+        })
+        
+        # Parse and validate the result
+        try:
+            result_dict = json.loads(str(result))
+            name = result_dict.get("name", "").strip()
+            confidence = result_dict.get("confidence", 0)
+            source = result_dict.get("source", "")
+            
+            # Immediate rejection of Emily Chen which is frequently returned despite warnings
+            if name.lower() == "emily chen":
+                logger.error("Model returned the explicitly forbidden example name 'Emily Chen'")
+                return {
+                    "name": file_name,
+                    "confidence": 0,
+                    "source": "forbidden_example_name"
+                }
+                
+            # Comprehensive name validation
+            if not name:
+                logger.warning("Empty name returned from extraction")
+                return {"name": file_name, "confidence": 0, "source": "empty_result"}
+                
+            # Reject known example/placeholder names
+            example_names = {
+                "emily chen", "john smith", "john doe", "jane doe", "emily j. miller",
+                "james wilson", "sarah johnson", "[actual extracted name]",
+                "your name", "candidate name", "resume", "emily chen"
+            }
+            if name.lower() in example_names:
+                logger.warning(f"Detected example/placeholder name '{name}' - rejecting")
+                return {"name": file_name, "confidence": 0, "source": "example_name_rejected"}
+                
+            # Check for placeholder text markers
+            if any(marker in name.lower() for marker in ["[", "]", "{", "}", "<", ">", "example"]):
+                logger.warning(f"Detected placeholder markers in name: '{name}' - rejecting")
+                return {"name": file_name, "confidence": 0, "source": "placeholder_rejected"}
+                
+            # Basic name structure validation (at least two parts, reasonable length)
+            name_parts = name.split()
+            if len(name_parts) < 2 or any(len(part) < 2 for part in name_parts):
+                logger.warning(f"Invalid name structure: '{name}' - rejecting")
+                return {"name": file_name, "confidence": 0, "source": "invalid_structure"}
+                
+            # Check for overly long names (likely parsing errors)
+            if len(name) > 50:
+                logger.warning(f"Name too long: '{name}' - rejecting")
+                return {"name": file_name, "confidence": 0, "source": "name_too_long"}
+            
+            # Log extraction metrics
+            duration = time.time() - start_time
+            logger.info(f"Name extraction completed in {duration:.2f} seconds")
+            logger.info(f"Extracted name '{name}' with confidence {confidence}")
+            logger.debug(f"Extraction source: {source}")
+            
+            # Use filename as fallback for low confidence results
+            if confidence < 70 and file_name:
+                logger.info(f"Low confidence score ({confidence}), using filename '{file_name}' instead")
+                return {
+                    "name": file_name,
+                    "confidence": 100,
+                    "source": "filename_fallback"
+                }
+            
+            # Return successful extraction result
+            return {
+                "name": name,
+                "confidence": confidence,
+                "source": source or "content_extraction"
+            }
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse name extraction result: {str(e)}")
+            return {
+                "name": file_name,
+                "confidence": 0,
+                "source": "parse_error"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in name extraction: {str(e)}")
+        return {
+            "name": file_name,
+            "confidence": 0,
+            "source": f"error: {str(e)}"
+        }
+
+@app.post("/all",
+         tags=["Resume Ranking"],
+         summary="Extract criteria from job description and rank resumes in one step",
+         response_class=StreamingResponse,
+         responses={
+             200: {
+                 "description": "Successfully ranked resumes",
+                 "content": {
+                     "text/csv": {
+                         "example": "Candidate,Criterion 1 Score,Criterion 2 Score,Total Score\nJohn Smith,4,5,9"
+                     }
+                 }
+             },
+             400: {
+                 "description": "Invalid file format or processing error",
+                 "model": ErrorResponse
+             }
+         })
+async def rank_resumes_from_job(
+    job_description: UploadFile = File(..., description="Job description file (PDF or DOCX)"),
+    resumes: List[UploadFile] = File(..., description="Resume files (PDF or DOCX)")
+) -> StreamingResponse:
+    """
+    Extract ranking criteria from a job description and score resumes against it in one step.
+    
+    This endpoint combines two operations:
+    1. Extracts ranking criteria from the job description file
+    2. Scores the provided resumes against those criteria
+    
+    The output is a CSV file containing:
+    - Candidate names (extracted from resumes)
+    - Individual scores for each criterion (0-5 scale)
+    - Total score
+    - Any processing errors
+    
+    Args:
+        job_description (UploadFile): Job description file in PDF or DOCX format
+        resumes (List[UploadFile]): List of resume files in PDF or DOCX format
+        
+    Returns:
+        StreamingResponse: CSV file with scoring results
+        
+    Raises:
+        HTTPException: If file processing fails or invalid format
+    """
+    logger.info(f"Starting resume ranking pipeline with {len(resumes)} resumes")
+    start_time = time.time()
+    
+    try:
+        # Step 1: Extract criteria from job description
+        logger.info("Step 1: Extracting criteria from job description")
+        criteria = await extract_criteria_from_file(job_description)
+        criteria_list = criteria.get("criteria", [])
+        
+        if not criteria_list:
+            error_msg = "No ranking criteria extracted from job description"
+            logger.error(error_msg)
+            raise HTTPException(status_code=400, detail=error_msg)
+            
+        logger.info(f"Extracted {len(criteria_list)} criteria")
+        
+        # Step 2: Score resumes against criteria
+        logger.info("Step 2: Scoring resumes against criteria")
+        
+        # Convert criteria list to JSON string for the score_resumes function
+        criteria_json = json.dumps(criteria_list)
+        
+        # Get the CSV response from score_resumes
+        csv_response = await score_resumes(criteria_json, resumes)
+        
+        # Log completion metrics
+        duration = time.time() - start_time
+        logger.info(f"Resume ranking pipeline completed in {duration:.2f} seconds")
+        
+        return csv_response
+        
+    except Exception as e:
+        error_msg = f"Error in resume ranking pipeline: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
+
+if __name__ == "__main__":
+    logger.info("Starting Resume Ranker API")
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
